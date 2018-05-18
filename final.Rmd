@@ -1,0 +1,253 @@
+---
+title: "Does Defense Win Championships in the NBA?"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+### Nick DeLuca, Spring 2018
+
+## The Question
+
+Across most team sports, there are varying ideas about what makes a good team. This is also the case in basketball, a personal favorite of mine. There are teams that pride themselves in their fast pace offense that puts up a lot of points per game, and others put an emphasis on shutting their opponents down on the defensive end of the court.
+
+There is a saying in football: defense wins championships. Does stellar defense correlate to wins in the NBA as well, or is offense the more important factor? In this analysis, that question will be answered.
+
+### 1.0 Setup
+
+The following libraries will be required:
+
+```{r libraries, message=FALSE}
+library(lubridate)
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(broom)
+library(purrr)
+library(tidyverse)
+library(tidyr)
+```
+
+### 2.0 Data Curation and Management
+
+The dataset we will be using is a CSV file of statistics for each game of the NBA regular season from 2014-2018. This dataset can be found on Kaggle here: https://www.kaggle.com/ionaskel/nba-games-stats-from-2014-to-2018
+
+Let's first load the dataset and take a look at a few observations to get a feel for the data.
+
+```{r dataset}
+games <- read.csv("./nba.games.stats.csv")
+
+games %>%
+  head(3)
+```
+
+We can see that each observation in the dataframe contains the team, date, home/away status, opposing team, whether the team won or lost, and numerous statistical categories for both the home and the away team. There is a ton of useful information here to form predictors from, but we are going to need to make some changes to get where we want to. One such change is converting the "Date" attribute to a datetime object to make it easier to extract information from later on. It might also be useful to create a field to represent what year the season started in, because the NBA's regular season begins in October and ends in April.
+
+```{r datetime}
+games <- games %>%
+  mutate(Date = as.Date(Date, '%Y-%m-%d')) %>%
+  mutate(Season.Start = ifelse(month(Date)<5, year(Date)-1, year(Date)))
+```
+
+### 2.1 Creating new fields
+
+Right now, the statistics we have for each team are for the game corresponding to that observation. This could be interesting, but its not really useful for a prediction model, because if you already know the stats for a game you know the result. What might be useful is season averages for the stats. 
+
+We will create new attributes for each team's averages for 9 offensive and 9 defensive stats, as they might come in handy later. To do this we will first group by Team and Season_Start, then calculate totals. As for the column names, "per game" will be abbreviated as "PG". For the teams' defensive statistics, column names will be given the suffix "A" for "Allowed".
+
+```{r newfields}
+games <- games %>%
+  group_by(Team,Season.Start) %>%
+  mutate(Games = max(Game)) %>%
+  mutate(W_bin = ifelse(WINorLOSS=="W",1L,0L)) %>%
+  mutate(Wins = sum(W_bin)) %>%
+  mutate(Losses = as.integer(max(Game)-Wins-0L)) %>%
+  mutate(PointsPG = sum(TeamPoints)/Games) %>%
+  mutate(FGAttemptsPG = sum(FieldGoalsAttempted)/Games) %>%
+  mutate(SeasonFGPercent = sum(FieldGoals)/sum(FieldGoalsAttempted)) %>%
+  mutate(x3PtAttemptsPG = sum(X3PointShotsAttempted)/Games) %>%
+  mutate(Season3PtPercent = sum(X3PointShots)/sum(X3PointShotsAttempted)) %>%
+  mutate(FTAttemptsPG = sum(FreeThrowsAttempted)/Games) %>%
+  mutate(AssistsPG = sum(Assists)/Games) %>%
+  mutate(OffReboundsPG = sum(OffRebounds)/Games) %>%
+  mutate(TurnoversPG = sum(Turnovers)/Games) %>%
+  mutate(Opp.PointsPG = sum(OpponentPoints)/Games) %>%
+  mutate(Opp.FGPercent = sum(Opp.FieldGoals)/sum(Opp.FieldGoalsAttempted)) %>%
+  mutate(Opp.3ptPercent = sum(Opp.3PointShots)/sum(Opp.3PointShotsAttempted)) %>%
+  mutate(StealsPG = sum(Steals)/Games) %>%
+  mutate(BlocksPG = sum(Blocks)/Games) %>%
+  mutate(FoulsPG = sum(TotalFouls)/Games) %>%
+  mutate(DefensiveRebounds = sum(TotalRebounds-OffRebounds)/Games) %>%
+  mutate(Opp.FTAttempts = sum(Opp.FreeThrowsAttempted)/Games) %>%
+  mutate(Opp.TurnoversPG = sum(Opp.Turnovers)/Games) %>%
+  ungroup() %>%
+  as.data.frame()
+```
+
+### 2.2 Organizing Data
+
+Now that we have our averages, our dataframe is a bit crowded. Let's clean it up a bit and make some data tables to organize the data we want to hold onto. We'll make one that holds each team's defensive stats for each season, one that holds offensive stats for each season, and one that stores minimal data about all of the games.
+
+#### 2.2.1 Team Offense by Season
+```{r offenseDT}
+SeasonStatsDT <- games %>%
+  select(Team,Season.Start,Games,Wins,Losses,PointsPG,FGAttemptsPG,SeasonFGPercent,x3PtAttemptsPG,Season3PtPercent,
+         FTAttemptsPG,AssistsPG,OffReboundsPG,TurnoversPG) %>%
+  data.table(key = "Team,Season.Start")
+
+SeasonOffenseDT <- SeasonStatsDT[, head(.SD, 1), by = key(SeasonStatsDT)]
+SeasonOffenseDT
+```
+#### 2.2.2 Team Defense by Season
+```{r defenseDT}
+SeasonStatsDT <- games %>%
+  select(Team,Season.Start,Games,Wins,Losses,Opp.PointsPG,Opp.FGPercent,Opp.3ptPercent,StealsPG,BlocksPG,FoulsPG,
+         DefensiveRebounds,Opp.FTAttempts,Opp.TurnoversPG) %>%
+  data.table(key = "Team,Season.Start")
+
+SeasonDefenseDT <- SeasonStatsDT[, head(.SD,1), by = key(SeasonStatsDT)]
+SeasonDefenseDT
+```
+#### 2.2.3 Game Info
+```{r gamesDT}
+GamesDT <- games %>%
+  select(Team,Game,Season.Start,Opponent,WINorLOSS) %>%
+  data.table()
+GamesDT 
+```
+
+### 3.0 Exploratory Data Analysis
+
+So, we have the data organized now. Whats next?
+
+We should make some plots in order to vizualize our data and get a sense of any trends that might be easily spotted. Because we want to compare the impact of offense and defense, we can start to look at that idea with these plots.
+
+#### 3.1 Offense Analysis
+
+Our goal is to get a simplified view of some trends that might be present in our data set. To accomplish this, let's explore the relationship between points scored and winning. The number of points a team scores should be a fairly good indicator of how strong the team's offense is, so it is a good attribute to use to look for patterns.
+
+Here is a plot comparing each team's total wins for a season and their points scored per game. We would expect this relationship to be fairly linear, which is why we'll use the option "method = lm".
+```{r ppgplot}
+SeasonOffenseDT %>%
+  as.data.frame() %>%
+  ggplot(mapping = aes(x=PointsPG, y=Wins)) + geom_point() + geom_smooth(method = lm) +
+  labs(title="Points per Game vs. Wins",
+       x="Points per Game",
+       y="Wins")
+```
+
+As you might expect, there appears to be a considerable relationship between points per game and number of wins. Now lets take a look at individual games. We can plot the points scored in a game against a binary win/loss result, where 1 represents a win and 0 represents a loss.
+```{r pointsplot}
+games %>%
+  ggplot(mapping = aes(x=TeamPoints,y=W_bin)) + geom_point() + geom_smooth(method = loess) +
+  labs(title="Points Scored vs. Win Probability",
+       x="Points Scored",
+       y="Win Probability")
+```
+
+
+Again, this looks about how one might expect. Interestingly, the probability of winning starts to trend back downwards once a team reaches about 137 points. Why would this be the case? 
+
+One possible reason is that the team scored that much by playing at a very fast pace and taking a lot of shots. Then, the other team would have just as many opportunities to score themselves. Another possible reason would be that the game went into overtime so there was more time to score points. This would mean that the game is very close and the other team has a good chance to win still. In both cases, this would be indicated by a high number of field goal attempts. Let's make one more plot of the chance of winning for number of field goal attempts.
+```{r FGA}
+games %>%
+  ggplot(mapping = aes(x=FieldGoalsAttempted,y=W_bin)) + geom_point() + geom_smooth(method = loess) +
+  labs(title="Field Goal Attempts vs. Win Probability",
+       x="Field Goal Attempts",
+       y="Win Probability")
+```
+
+This is an interesting result. Although there doesn't seem to be a significant correlation between shots attempted and winning, win percentage does appear to decrease slightly as shot attempts increase, and there is much more variabilty when shot attempts are high. This variability likely has something to do with the fact that there are fewer data points where shot attempts are very high, but there are 6 losses where shot attempts exceed 110 and only 3 such wins.
+
+This begs the question, do teams that attempt many shots in a game usually maintain an efficient shooting percentage while doing so? We can plot field goal attempts against field goal percentage to find out.
+```{r fgavpercent}
+games %>%
+  ggplot(mapping = aes(x=FieldGoalsAttempted,y=FieldGoals.)) + geom_point() + geom_smooth(method = lm) +
+  labs(title="Field Goal Attempts vs. Percentage of Field Goals Made",
+       x="Field Goal Attempts",
+       y="Percentage Made")
+```
+
+While there is not a ton of correlation here, we can see that teams that attempt an abnormally high amount of field goals in a game tend to make a relatively low percentage of their shots.
+
+#### 3.2 Defense Analysis
+
+Now let's take a look at some of the defensive stats and how they relate to wins. Similarly to offense, points allowed per game should give us a decent idea of how defense relates to wins.
+
+```{r papg}
+SeasonDefenseDT %>%
+  as.data.frame() %>%
+  ggplot(mapping = aes(x=Opp.PointsPG,y=Wins)) + geom_point() + geom_smooth(method = lm) + 
+  labs(title="Points Allowed per Game vs. Wins",
+       x="Points Allowed per Game",
+       y="Wins")
+```
+
+It appears that there is a similarly strong relationship between points allowed per game and winning as we saw with points scored per game and winning. If we look at points allowed in individual games and the result, the plot should be exactly the inverse of the points scored in individual games plot. Let's plot it just to be sure.
+
+```{r pointsallowed}
+games %>%
+  ggplot(mapping = aes(x=OpponentPoints,y=W_bin)) + geom_point() + geom_smooth(method = loess) +
+  labs(title="Points Allowed vs. Win Probability",
+       x="Points Allowed",
+       y="Win Probability")
+```
+
+As expected, win probability plummets as points allowed increases before beginning to trend back upwards as points allowed reaches the very high end. 
+
+### 4.0 Machine Learning
+
+We are going to use machine learning models to see if there is a difference in the predictive capabilities of a model that uses offensive statistics and one that uses defensive statistics.
+
+#### 4.1 Hypothesis
+
+We want to determine whether offense or defense is a better predictive model for wins, so we want to create a model for each and compare their accuracy. Looking at the individual plots for the offensive and defensive stats, it seems like there should be similar predictive capabilities for both. Because of this, our null hypothesis is that there will not be a significant difference between the predictive model using offensive statistics and the one using defensive statistics. We will test this with an alpha level of 0.05.
+
+#### 4.2 Data Preparation
+
+We want to predict the results of a game using a team's season averages compared to their opponents. To do this, we will prepare matrices for the teams' offensive/defensive stats and their opponents' offensive/defensive stats for all the games. We will then subtract the opponents' offense matrix from the other offense matrix, and do the same for defense. The result will be two matrices containing the difference between in offensive stats between the two teams in a game, and the same for defense. We will also add a column for the result of the game for the machine learning model to use in training and testing.
+
+```{r matrix}
+offDF <- data.frame()
+defDF <- data.frame()
+
+for(row in 1:nrow(GamesDT))
+{
+  team <- GamesDT[row, get('Team')]
+  opp <- GamesDT[row, get('Opponent')]
+  season <- GamesDT[row, get('Season.Start')]
+  outcome <- GamesDT[row, get('WINorLOSS')]
+  
+  teamOff <- subset(SeasonOffenseDT, get('Team')==team & get('Season.Start')==season) %>%
+    select(-Team,-Season.Start,-Games,-Wins,-Losses)
+  
+  oppOff <- subset(SeasonOffenseDT, get('Team')==opp & get('Season.Start')==season) %>%
+    select(-Team,-Season.Start,-Games,-Wins,-Losses)
+  
+  diffOff <- teamOff-oppOff
+  diffOff <- diffOff %>%
+    cbind(ifelse(outcome=="W",1L,0L))
+  offDF <- offDF %>%
+    rbind(diffOff)
+  
+  teamDef <- subset(SeasonDefenseDT, get('Team')==team & get('Season.Start')==season) %>%
+    select(-Team,-Season.Start,-Games,-Wins,-Losses)
+  
+  oppDef <- subset(SeasonDefenseDT, get('Team')==opp & get('Season.Start')==season) %>%
+    select(-Team,-Season.Start,-Games,-Wins,-Losses)
+  
+  diffDef <- teamDef-oppDef
+  diffDef <- diffDef %>%
+    cbind(ifelse(outcome=="W",1L,0L))
+  defDF <- defDF %>%
+    rbind(diffDef)
+}
+offDF %>%
+  head()
+defDF %>% 
+  head()
+```
+
+
