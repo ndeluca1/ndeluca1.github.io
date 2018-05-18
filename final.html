@@ -324,6 +324,7 @@ library(ggplot2)
 library(broom)
 library(purrr)
 library(tidyverse)
+library(randomForest)
 library(tidyr)</code></pre>
 </div>
 <div id="data-curation-and-management" class="section level3">
@@ -609,7 +610,7 @@ for(row in 1:nrow(GamesDT))
   
   diffOff &lt;- teamOff-oppOff
   diffOff &lt;- diffOff %&gt;%
-    cbind(ifelse(outcome==&quot;W&quot;,1L,0L))
+    cbind(outcome)
   offDF &lt;- offDF %&gt;%
     rbind(diffOff)
   
@@ -621,7 +622,7 @@ for(row in 1:nrow(GamesDT))
   
   diffDef &lt;- teamDef-oppDef
   diffDef &lt;- diffDef %&gt;%
-    cbind(ifelse(outcome==&quot;W&quot;,1L,0L))
+    cbind(outcome)
   defDF &lt;- defDF %&gt;%
     rbind(diffDef)
 }
@@ -634,13 +635,13 @@ offDF %&gt;%
 ## 4:  8.3902439   -2.8414634     0.045665388       7.146341       0.06210386
 ## 5: 10.6585366   -0.3292683     0.037403961       6.560976       0.03314746
 ## 6: 10.6585366   -0.3292683     0.037403961       6.560976       0.03314746
-##    FTAttemptsPG AssistsPG OffReboundsPG TurnoversPG V2
-## 1:   -3.4024390  5.000000     -2.024390  1.25609756  0
-## 2:   -1.0000000  4.317073     -1.719512  0.12195122  1
-## 3:   -0.2317073  1.353659     -1.109756 -0.01219512  0
-## 4:   -1.6097561  5.573171     -1.280488  2.28048780  0
-## 5:    1.9512195  4.451220     -1.853659 -0.31707317  1
-## 6:    1.9512195  4.451220     -1.853659 -0.31707317  1</code></pre>
+##    FTAttemptsPG AssistsPG OffReboundsPG TurnoversPG outcome
+## 1:   -3.4024390  5.000000     -2.024390  1.25609756       L
+## 2:   -1.0000000  4.317073     -1.719512  0.12195122       W
+## 3:   -0.2317073  1.353659     -1.109756 -0.01219512       L
+## 4:   -1.6097561  5.573171     -1.280488  2.28048780       L
+## 5:    1.9512195  4.451220     -1.853659 -0.31707317       W
+## 6:    1.9512195  4.451220     -1.853659 -0.31707317       W</code></pre>
 <pre class="r"><code>defDF %&gt;% 
   head()</code></pre>
 <pre><code>##    Opp.PointsPG Opp.FGPercent Opp.3ptPercent StealsPG    BlocksPG
@@ -650,14 +651,144 @@ offDF %&gt;%
 ## 4:  -0.20731707  -0.001155986   -0.016469764 2.987805 -0.82926829
 ## 5:  -4.08536585  -0.020914944   -0.039364882 2.060976 -0.02439024
 ## 6:  -4.08536585  -0.020914944   -0.039364882 2.060976 -0.02439024
-##       FoulsPG DefensiveRebounds Opp.FTAttempts Opp.TurnoversPG V2
-## 1: -3.1097561          1.036585     -3.3170732        1.646341  0
-## 2: -3.4756098         -2.573171     -3.6585366        3.256098  1
-## 3: -1.3048780         -1.963415     -1.2560976        1.878049  0
-## 4: -0.4512195         -2.219512     -0.2682927        3.365854  0
-## 5: -3.7926829          2.048780     -4.6463415        2.000000  1
-## 6: -3.7926829          2.048780     -4.6463415        2.000000  1</code></pre>
+##       FoulsPG DefensiveRebounds Opp.FTAttempts Opp.TurnoversPG outcome
+## 1: -3.1097561          1.036585     -3.3170732        1.646341       L
+## 2: -3.4756098         -2.573171     -3.6585366        3.256098       W
+## 3: -1.3048780         -1.963415     -1.2560976        1.878049       L
+## 4: -0.4512195         -2.219512     -0.2682927        3.365854       L
+## 5: -3.7926829          2.048780     -4.6463415        2.000000       W
+## 6: -3.7926829          2.048780     -4.6463415        2.000000       W</code></pre>
 </div>
+<div id="modeling" class="section level4">
+<h4>4.3 Modeling</h4>
+<p>We’ll try to fit the relationship to a linear model for offense and defense and see if they have any predictive capability. The outcome predicted will be W or L based on the differences in offensive statistics or defensive statistics.</p>
+<pre class="r"><code>offDF &lt;- offDF %&gt;%
+  mutate(outcome=factor(outcome, levels=c(&quot;L&quot;, &quot;W&quot;)))
+
+defDF &lt;- defDF %&gt;%
+  mutate(outcome=factor(outcome, levels=c(&quot;L&quot;, &quot;W&quot;)))
+
+set.seed(1264)
+test_random_forest_off &lt;- offDF %&gt;%
+  group_by(outcome) %&gt;%
+  sample_frac(.3) %&gt;%
+  ungroup()
+
+train_random_forest_off &lt;- offDF %&gt;%
+  anti_join(test_random_forest_off)
+rf &lt;- randomForest(outcome~., mtry=1, data=train_random_forest_off)
+rf</code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(formula = outcome ~ ., data = train_random_forest_off,      mtry = 1) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 1
+## 
+##         OOB estimate of  error rate: 39.51%
+## Confusion matrix:
+##      L    W class.error
+## L 1485  869   0.3691589
+## W  986 1355   0.4211875</code></pre>
+<pre class="r"><code>test_predictions &lt;- predict(rf, newdata=test_random_forest_off)
+table(pred=test_predictions, observed=test_random_forest_off$outcome)</code></pre>
+<pre><code>##     observed
+## pred   L   W
+##    L 636 902
+##    W 840 574</code></pre>
+<p>The offense-based model did not perform well. It only predicted 41% of the test cases correctly. There may have been too many attributes that were not impactful. Let’s try to cut it down to the relationships we saw were strong earlier.</p>
+<pre class="r"><code>test_random_forest_off &lt;- offDF %&gt;%
+  group_by(outcome) %&gt;%
+  sample_frac(.3) %&gt;%
+  ungroup()
+
+train_random_forest_off &lt;- offDF %&gt;%
+  anti_join(test_random_forest_off)</code></pre>
+<pre><code>## Joining, by = c(&quot;PointsPG&quot;, &quot;FGAttemptsPG&quot;, &quot;SeasonFGPercent&quot;, &quot;x3PtAttemptsPG&quot;, &quot;Season3PtPercent&quot;, &quot;FTAttemptsPG&quot;, &quot;AssistsPG&quot;, &quot;OffReboundsPG&quot;, &quot;TurnoversPG&quot;, &quot;outcome&quot;)</code></pre>
+<pre class="r"><code>rf &lt;- randomForest(outcome~PointsPG*SeasonFGPercent, data=train_random_forest_off)
+rf</code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(formula = outcome ~ PointsPG * SeasonFGPercent,      data = train_random_forest_off) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 1
+## 
+##         OOB estimate of  error rate: 37.92%
+## Confusion matrix:
+##      L    W class.error
+## L 1526  837   0.3542107
+## W  936 1377   0.4046693</code></pre>
+<pre class="r"><code>test_predictions &lt;- predict(rf, newdata=test_random_forest_off)
+table(pred=test_predictions, observed=test_random_forest_off$outcome)</code></pre>
+<pre><code>##     observed
+## pred   L   W
+##    L 532 977
+##    W 944 499</code></pre>
+<p>Removing weaker relationships did not prove to make the predictions more accurate either. In fact, the error rate was higher. Let’s see about defense.</p>
+<pre class="r"><code>test_random_forest_def &lt;- defDF %&gt;%
+  group_by(outcome) %&gt;%
+  sample_frac(.3) %&gt;%
+  ungroup()
+
+train_random_forest_def &lt;- defDF %&gt;%
+  anti_join(test_random_forest_def)</code></pre>
+<pre><code>## Joining, by = c(&quot;Opp.PointsPG&quot;, &quot;Opp.FGPercent&quot;, &quot;Opp.3ptPercent&quot;, &quot;StealsPG&quot;, &quot;BlocksPG&quot;, &quot;FoulsPG&quot;, &quot;DefensiveRebounds&quot;, &quot;Opp.FTAttempts&quot;, &quot;Opp.TurnoversPG&quot;, &quot;outcome&quot;)</code></pre>
+<pre class="r"><code>rf &lt;- randomForest(outcome~., mtry=1, data=train_random_forest_def)
+rf</code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(formula = outcome ~ ., data = train_random_forest_def,      mtry = 1) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 1
+## 
+##         OOB estimate of  error rate: 38.45%
+## Confusion matrix:
+##      L    W class.error
+## L 1443  871   0.3764045
+## W  911 1409   0.3926724</code></pre>
+<pre class="r"><code>test_predictions &lt;- predict(rf, newdata=test_random_forest_def)
+table(pred=test_predictions, observed=test_random_forest_def$outcome)</code></pre>
+<pre><code>##     observed
+## pred   L   W
+##    L 600 955
+##    W 876 521</code></pre>
+<p>The defensive model did not perform well either. It only predicted 38% of the test cases correct. Again, let’s try using only a couple predictors.</p>
+<pre class="r"><code>test_random_forest_def &lt;- defDF %&gt;%
+  group_by(outcome) %&gt;%
+  sample_frac(.3) %&gt;%
+  ungroup()
+
+train_random_forest_def &lt;- defDF %&gt;%
+  anti_join(test_random_forest_def)</code></pre>
+<pre><code>## Joining, by = c(&quot;Opp.PointsPG&quot;, &quot;Opp.FGPercent&quot;, &quot;Opp.3ptPercent&quot;, &quot;StealsPG&quot;, &quot;BlocksPG&quot;, &quot;FoulsPG&quot;, &quot;DefensiveRebounds&quot;, &quot;Opp.FTAttempts&quot;, &quot;Opp.TurnoversPG&quot;, &quot;outcome&quot;)</code></pre>
+<pre class="r"><code>rf &lt;- randomForest(outcome~Opp.PointsPG*Opp.FGPercent, data=train_random_forest_def)
+rf</code></pre>
+<pre><code>## 
+## Call:
+##  randomForest(formula = outcome ~ Opp.PointsPG * Opp.FGPercent,      data = train_random_forest_def) 
+##                Type of random forest: classification
+##                      Number of trees: 500
+## No. of variables tried at each split: 1
+## 
+##         OOB estimate of  error rate: 38.66%
+## Confusion matrix:
+##      L    W class.error
+## L 1496  881   0.3706353
+## W  945 1401   0.4028133</code></pre>
+<pre class="r"><code>test_predictions &lt;- predict(rf, newdata=test_random_forest_def)
+table(pred=test_predictions, observed=test_random_forest_def$outcome)</code></pre>
+<pre><code>##     observed
+## pred    L    W
+##    L  566 1012
+##    W  910  464</code></pre>
+<p>Once again, the error rate was still very high. This model also performed worse than the one with more predictors.</p>
+</div>
+</div>
+<div id="conclusion" class="section level3">
+<h3>Conclusion</h3>
+<p>Overall, the models both performed very similarly. Neither one was very accurate, with the offense predicting 41% of the test cases correctly and the defense predicting 38% of the test cases correctly. Unfortunately, it seems like there is just too much game-to-game variance in team performance to predict the outcome of a game using statistical averages.</p>
 </div>
 </div>
 

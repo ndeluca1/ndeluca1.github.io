@@ -27,6 +27,7 @@ library(ggplot2)
 library(broom)
 library(purrr)
 library(tidyverse)
+library(randomForest)
 library(tidyr)
 ```
 
@@ -209,7 +210,7 @@ We want to determine whether offense or defense is a better predictive model for
 
 We want to predict the results of a game using a team's season averages compared to their opponents. To do this, we will prepare matrices for the teams' offensive/defensive stats and their opponents' offensive/defensive stats for all the games. We will then subtract the opponents' offense matrix from the other offense matrix, and do the same for defense. The result will be two matrices containing the difference between in offensive stats between the two teams in a game, and the same for defense. We will also add a column for the result of the game for the machine learning model to use in training and testing.
 
-```{r matrix}
+```{r matrix, message=FALSE}
 offDF <- data.frame()
 defDF <- data.frame()
 
@@ -228,7 +229,7 @@ for(row in 1:nrow(GamesDT))
   
   diffOff <- teamOff-oppOff
   diffOff <- diffOff %>%
-    cbind(ifelse(outcome=="W",1L,0L))
+    cbind(outcome)
   offDF <- offDF %>%
     rbind(diffOff)
   
@@ -240,7 +241,7 @@ for(row in 1:nrow(GamesDT))
   
   diffDef <- teamDef-oppDef
   diffDef <- diffDef %>%
-    cbind(ifelse(outcome=="W",1L,0L))
+    cbind(outcome)
   defDF <- defDF %>%
     rbind(diffDef)
 }
@@ -250,4 +251,81 @@ defDF %>%
   head()
 ```
 
+#### 4.3 Modeling
 
+We'll try to fit the relationship to a linear model for offense and defense and see if they have any predictive capability. The outcome predicted will be W or L based on the differences in offensive statistics or defensive statistics.
+
+```{r lm, message=FALSE}
+offDF <- offDF %>%
+  mutate(outcome=factor(outcome, levels=c("L", "W")))
+
+defDF <- defDF %>%
+  mutate(outcome=factor(outcome, levels=c("L", "W")))
+
+set.seed(1264)
+test_random_forest_off <- offDF %>%
+  group_by(outcome) %>%
+  sample_frac(.3) %>%
+  ungroup()
+
+train_random_forest_off <- offDF %>%
+  anti_join(test_random_forest_off)
+rf <- randomForest(outcome~., mtry=1, data=train_random_forest_off)
+rf
+test_predictions <- predict(rf, newdata=test_random_forest_off)
+table(pred=test_predictions, observed=test_random_forest_off$outcome)
+```
+
+The offense-based model did not perform well. It only predicted 41% of the test cases correctly. There may have been too many attributes that were not impactful. Let's try to cut it down to the relationships we saw were strong earlier.
+
+```{r lmoff2}
+test_random_forest_off <- offDF %>%
+  group_by(outcome) %>%
+  sample_frac(.3) %>%
+  ungroup()
+
+train_random_forest_off <- offDF %>%
+  anti_join(test_random_forest_off)
+rf <- randomForest(outcome~PointsPG*SeasonFGPercent, data=train_random_forest_off)
+rf
+test_predictions <- predict(rf, newdata=test_random_forest_off)
+table(pred=test_predictions, observed=test_random_forest_off$outcome)
+```
+
+Removing weaker relationships did not prove to make the predictions more accurate either. In fact, the error rate was higher. Let's see about defense.
+
+```{r lm2}
+test_random_forest_def <- defDF %>%
+  group_by(outcome) %>%
+  sample_frac(.3) %>%
+  ungroup()
+
+train_random_forest_def <- defDF %>%
+  anti_join(test_random_forest_def)
+rf <- randomForest(outcome~., mtry=1, data=train_random_forest_def)
+rf
+test_predictions <- predict(rf, newdata=test_random_forest_def)
+table(pred=test_predictions, observed=test_random_forest_def$outcome)
+```
+
+The defensive model did not perform well either. It only predicted 38% of the test cases correct. Again, let's try using only a couple predictors.
+
+```{r lmdef2}
+test_random_forest_def <- defDF %>%
+  group_by(outcome) %>%
+  sample_frac(.3) %>%
+  ungroup()
+
+train_random_forest_def <- defDF %>%
+  anti_join(test_random_forest_def)
+rf <- randomForest(outcome~Opp.PointsPG*Opp.FGPercent, data=train_random_forest_def)
+rf
+test_predictions <- predict(rf, newdata=test_random_forest_def)
+table(pred=test_predictions, observed=test_random_forest_def$outcome)
+```
+
+Once again, the error rate was still very high. This model also performed worse than the one with more predictors.
+
+### Conclusion
+
+Overall, the models both performed very similarly. Neither one was very accurate, with the offense predicting 41% of the test cases correctly and the defense predicting 38% of the test cases correctly. Unfortunately, it seems like there is just too much game-to-game variance in team performance to predict the outcome of a game using statistical averages.
